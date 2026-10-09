@@ -4,12 +4,12 @@ namespace App\Filament\Resources\Filaments\Tables;
 
 use App\Filament\Resources\Shared\DecimalColumn;
 use App\Models\Filament;
+use App\Support\Decimal;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
 
 class FilamentsTable
 {
@@ -20,10 +20,9 @@ class FilamentsTable
                 TextColumn::make('brand')->searchable()->sortable(),
                 TextColumn::make('material')->searchable()->sortable(),
                 TextColumn::make('color')->searchable()->sortable(),
-                DecimalColumn::make('purchase_price')->label('Spool price')->money('EUR'),
+                DecimalColumn::make('purchase_price')->label('Spool price')->formatStateUsing(fn (string $state): string => Decimal::money($state)),
                 DecimalColumn::make('spool_weight')->suffix(' g'),
-                TextColumn::make('price_per_kg')->label('Current €/kg')->money('EUR')
-                    ->sortable(query: fn (Builder $query, string $direction): Builder => $query->orderByRaw("purchase_price * 1000.0 / NULLIF(spool_weight, 0) {$direction}")),
+                DecimalColumn::make('price_per_kg')->label('Current €/kg')->formatStateUsing(fn (string $state): string => Decimal::money($state)),
             ])
             ->filters([
                 ...array_map(fn (string $field): SelectFilter => SelectFilter::make($field)

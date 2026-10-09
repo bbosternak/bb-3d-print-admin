@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Products\Schemas;
 
 use App\Filament\Resources\Shared\DecimalInput;
+use App\Filament\Resources\Shared\IntegerInput;
 use App\Models\Filament;
 use App\Models\Setting;
 use App\Support\Decimal;
@@ -33,9 +34,9 @@ class ProductForm
                 ])->columns(2)->columnSpanFull(),
                 Section::make('Printing batch')->description('Enter the material and time for the entire batch. Costs are divided by the batch quantity.')
                     ->schema([
-                        TextInput::make('batch_quantity')->integer()->minValue(1)->maxValue(2147483647)->required()->default(1),
+                        IntegerInput::make('batch_quantity')->minValue(1)->maxValue(2147483647)->required()->default(1),
                         DecimalInput::make('batch_weight')->label('Total batch weight')->suffix('g')->minValue(0)->required(),
-                        TextInput::make('batch_seconds')->label('Batch printing time')->suffix('seconds')->integer()->minValue(0)->maxValue(2147483647)->required(),
+                        IntegerInput::make('batch_seconds')->label('Batch printing time')->suffix('seconds')->minValue(0)->maxValue(2147483647)->required(),
                         DecimalInput::make('additional_material_cost')->label('Additional material cost per item')->prefix('€')->minValue(0)->required()->default('0'),
                         Repeater::make('usages')->label('Batch filament usage')->schema([
                             Select::make('filament_id')->label('Filament')

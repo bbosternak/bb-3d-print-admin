@@ -4,48 +4,43 @@ namespace App\Filament\Resources\Shared;
 
 use App\Models\Expense;
 use App\Models\Sale;
-use App\Services\CostCalculator;
+use App\Services\FinancialSummary as SummaryService;
 use App\Support\Decimal;
 use Illuminate\Database\Eloquent\Builder;
 
 class FinancialSummary
 {
+    private const SALES_CACHE_KEY = 'filament.sales-financial-summaries';
+
     public static function expenses(Builder $filtered): string
     {
-        $selected = (clone $filtered)->get();
-        $total = self::sum($selected->pluck('amount')->all());
-        $all = self::sum(Expense::query()->pluck('amount')->all());
-        $categories = $selected->groupBy('category')->map(fn ($expenses, string $category): string => $category.': '.self::sum($expenses->pluck('amount')->all()))->implode(' · ');
+        $service = app(SummaryService::class);
+        $selected = $service->summarizeQueries(Sale::query()->whereRaw('1 = 0'), $filtered);
+        $total = Decimal::money($selected['expenses']);
+        $all = Decimal::money($service->aggregateExpenses(Expense::query()));
+        $categories = collect($selected['categories'])->map(fn (string $amount, string $category): string => $category.': '.Decimal::money($amount))->implode(' · ');
 
         return "Selected period / filters: {$total} · All-time expenses: {$all}".($categories === '' ? '' : ' · Selected categories — '.$categories);
     }
 
     public static function sales(Builder $filtered): string
     {
-        $selected = (clone $filtered)->with('product.usages.filament')->get();
-        $revenue = '0';
-        $printing = '0';
-        $processing = '0';
-        $electricity = '0';
-        foreach ($selected as $sale) {
-            $revenue = Decimal::add($revenue, $sale->revenue);
-            if (! $sale->product) {
-                continue;
-            }
-            $cost = app(CostCalculator::class)->calculate($sale->product);
-            $printing = Decimal::add($printing, Decimal::mul($cost['printing_hours'], (string) $sale->quantity));
-            $processing = Decimal::add($processing, Decimal::mul($cost['processing_hours'], (string) $sale->quantity));
-            $electricity = Decimal::add($electricity, Decimal::mul($cost['electricity_cost'], (string) $sale->quantity));
+        $request = request();
+        $cache = $request->attributes->get(self::SALES_CACHE_KEY, []);
+        $key = hash('sha256', $filtered->toSql().serialize($filtered->getBindings()));
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
         }
-        $all = self::sum(Sale::query()->get()->pluck('revenue')->all());
 
-        return 'Selected period / filters revenue: '.Decimal::money($revenue).' · All-time revenue: '.$all
-            .' · Current estimates for selected sales: printing '.Decimal::round($printing, 2).' h, processing '.Decimal::round($processing, 2).' h, electricity '.Decimal::money($electricity)
+        $service = app(SummaryService::class);
+        $selected = $service->summarizeQueries($filtered, Expense::query()->whereRaw('1 = 0'));
+        $all = Decimal::money($service->aggregateRevenue(Sale::query()));
+
+        $cache[$key] = 'Selected period / filters revenue: '.Decimal::money($selected['revenue']).' · All-time revenue: '.$all
+            .' · Current estimates for selected sales: printing '.Decimal::round($selected['printing_hours'], 2).' h, processing '.Decimal::round($selected['processing_hours'], 2).' h, electricity '.Decimal::money($selected['electricity_cost'])
             .' (based on current products and settings, not historical costs).';
-    }
+        $request->attributes->set(self::SALES_CACHE_KEY, $cache);
 
-    private static function sum(array $amounts): string
-    {
-        return Decimal::money(array_reduce($amounts, fn (string $sum, mixed $amount): string => Decimal::add($sum, (string) $amount), '0'));
+        return $cache[$key];
     }
 }

@@ -98,6 +98,20 @@ class CalculationTest extends TestCase
         }
     }
 
+    public function test_reference_additional_material_cost_is_included_in_the_total(): void
+    {
+        $product = $this->reference(['selling_price' => '14.90', 'additional_material_cost' => '0.20']);
+        $calculator = app(CostCalculator::class);
+        $costs = $calculator->calculate($product);
+        $this->assertDecimal('6.3338', $costs['manufacturing_cost']);
+        $this->assertDecimal('6.3338', $costs['total_cost']);
+        $this->assertDecimal('8.5662', $costs['profit']);
+        $product->update(['additional_material_cost' => '0']);
+        $costs = $calculator->calculate($product);
+        $this->assertDecimal('6.1338', $costs['total_cost']);
+        $this->assertDecimal('8.7662', $costs['profit']);
+    }
+
     public function test_current_prices_settings_and_product_edits_apply_even_to_cached_models(): void
     {
         $product = $this->reference()->load('usages.filament');
@@ -177,6 +191,18 @@ class CalculationTest extends TestCase
         $this->assertSame(0, bccomp(bcmod($result['rounded_price'], '0.000000000001', D::SCALE), '0', D::SCALE));
     }
 
+    public function test_suggested_costs_keep_the_rounded_price_when_it_equals_a_stale_original_price(): void
+    {
+        $product = $this->reference()->load('usages');
+        Product::findOrFail($product->id)->update(['selling_price' => '30']);
+        $this->assertDecimal('12', $product->selling_price);
+        $result = app(PricingCalculator::class)->calculate($product, 'profit', '5.8662');
+        $this->assertDecimal('12', $result['rounded_price']);
+        $this->assertDecimal('12', $result['costs']['selling_price']);
+        $this->assertDecimal('5.8662', $result['costs']['profit']);
+        $this->assertDecimal('30', $product->fresh()->selling_price);
+    }
+
     public function test_zero_edges_and_impossible_targets_raise_clear_validation_errors(): void
     {
         $product = app(ProductService::class)->simulate(['processing_minutes_override' => '0']);
@@ -209,9 +235,12 @@ class CalculationTest extends TestCase
         $this->assertSame('1.01', D::round('1.005'));
         $this->assertSame('-1.01', D::round('-1.005'));
         $this->assertSame('€6.13', D::money('6.1338'));
-        $this->assertSame('1h 1m 1.123456789012s', D::duration('3661.123456789012'));
+        $this->assertSame('1h 1m 1.12s', D::duration('3661.123456789012'));
         $this->assertSame('0s', D::duration('0'));
-        $this->assertSame('0.000000000001s', D::duration('0.000000000001'));
+        $this->assertSame('0s', D::duration('0.000000000001'));
+        $this->assertSame('1m', D::duration('59.999'));
+        $this->assertSame('1h', D::duration('3599.999'));
+        $this->assertSame('1h 1m 0.33s', D::duration('3660.333333333333333333333333333333333333'));
         $this->assertSame('-1m 1.5s', D::duration('-61.5'));
         $this->assertInvalid(fn () => D::div('1', '0'));
     }

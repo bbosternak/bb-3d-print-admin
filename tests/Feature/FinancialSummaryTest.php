@@ -192,4 +192,29 @@ class FinancialSummaryTest extends TestCase
             ->assertSee('Recorded revenue')
             ->assertSee('Recorded expenses');
     }
+
+    public function test_filtered_query_summaries_and_table_aggregates_share_decimal_financial_logic(): void
+    {
+        $product = $this->product();
+        $this->sale($product, '2026-01-10', '0.10', 3);
+        $this->sale($product, '2026-02-10', '999', 1);
+        $this->expense('2026-01-15', '0.20', 'Material');
+        $this->expense('2026-01-15', '999', 'Equipment');
+        $sales = Sale::query()->where('sale_date', '<', '2026-02-01');
+        $expenses = Expense::query()->where('category', 'Material');
+        $service = app(FinancialSummary::class);
+
+        $summary = $service->summarizeQueries($sales, $expenses);
+        $this->assertDecimal('0.30', $summary['revenue']);
+        $this->assertDecimal('0.20', $summary['expenses']);
+        $this->assertDecimal('0.10', $summary['cash_flow']);
+        $this->assertDecimal('27', $summary['printing_hours']);
+        $this->assertDecimal('0.75', $summary['processing_hours']);
+        $this->assertDecimal('0.30', $service->aggregateRevenue($sales));
+        $this->assertDecimal('0.30', $service->aggregateRevenue($sales->toBase()));
+        $this->assertDecimal('0.20', $service->aggregateExpenses($expenses));
+        $this->assertDecimal('0.20', $service->aggregateExpenses($expenses->toBase()));
+        $this->assertSame(1, $sales->count());
+        $this->assertSame(1, $expenses->count());
+    }
 }

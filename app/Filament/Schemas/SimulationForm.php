@@ -43,8 +43,8 @@ class SimulationForm
         'printing_hours' => 'Printing hours / unit',
         'processing_hours' => 'Processing hours / unit',
         'filament_grams' => 'Filament grams / unit',
-        'printing_seconds' => 'Printing seconds / unit',
-        'processing_minutes' => 'Processing minutes / unit',
+        'printing_seconds' => 'Printing time / unit',
+        'processing_minutes' => 'Manual processing / unit (minutes)',
     ];
 
     public static function configure(Schema $schema): Schema
@@ -58,10 +58,14 @@ class SimulationForm
             Section::make('Production simulation')
                 ->description('Batch weight must equal the sum of filament usage. Costs are calculated per unit.')
                 ->schema([
-                    TextInput::make('batch_quantity')->integer()->minValue(1)->maxValue(2147483647)->required(),
+                    TextInput::make('batch_quantity')->inputMode('numeric')->step(1)
+                        ->rules(['numeric', 'integer', fn (): \Closure => Decimal::integerRule()])
+                        ->minValue(1)->maxValue(2147483647)->required(),
                     self::decimal('batch_weight', 'Batch weight (g)')->required(),
                     TextInput::make('batch_seconds')->label('Batch printing time (seconds)')
-                        ->integer()->minValue(0)->maxValue(2147483647)->required(),
+                        ->inputMode('numeric')->step(1)
+                        ->rules(['numeric', 'integer', fn (): \Closure => Decimal::integerRule(false)])
+                        ->minValue(0)->maxValue(2147483647)->required(),
                     self::decimal('selling_price', 'Selling price / unit')->required(),
                     self::decimal('additional_material_cost', 'Additional materials / unit')->required(),
                     Repeater::make('usages')

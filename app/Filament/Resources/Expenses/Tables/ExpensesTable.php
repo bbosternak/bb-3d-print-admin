@@ -6,6 +6,7 @@ use App\Filament\Resources\Shared\DateRangeFilter;
 use App\Filament\Resources\Shared\DecimalColumn;
 use App\Filament\Resources\Shared\FinancialSummary;
 use App\Models\Expense;
+use App\Services\FinancialSummary as SummaryService;
 use App\Support\Decimal;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -27,9 +28,9 @@ class ExpensesTable
                 TextColumn::make('date')->date()->sortable(),
                 TextColumn::make('description')->searchable()->sortable(),
                 TextColumn::make('category')->searchable()->sortable(),
-                DecimalColumn::make('amount')->money('EUR')->summarize(Summarizer::make('total')->money('EUR')->label('Filtered total')
-                    ->using(fn (QueryBuilder $query): string => array_reduce($query->pluck('amount')->all(),
-                        fn (string $sum, mixed $amount): string => Decimal::add($sum, (string) $amount), '0'))),
+                DecimalColumn::make('amount')->formatStateUsing(fn (string $state): string => Decimal::money($state))
+                    ->summarize(Summarizer::make('total')->formatStateUsing(fn (string $state): string => Decimal::money($state))->label('Filtered total')
+                        ->using(fn (QueryBuilder $query): string => app(SummaryService::class)->aggregateExpenses($query))),
                 TextColumn::make('notes')->searchable()->limit(50)->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([

@@ -2,34 +2,31 @@
 
 namespace App\Filament\Resources\Products\Tables;
 
+use App\Filament\Resources\Shared\DecimalSort;
 use App\Models\Product;
 use App\Services\CostCalculator;
-use App\Support\Decimal;
 use Illuminate\Database\Eloquent\Builder;
 
 class ProductCosts
 {
+    private const CACHE_KEY = 'filament.product-cost-breakdowns';
+
     public static function value(Product $product, string $key): string
     {
-        return app(CostCalculator::class)->calculate($product)[$key];
+        $request = request();
+        $cache = $request->attributes->get(self::CACHE_KEY, []);
+        $id = $product->getKey() ?? 'transient:'.spl_object_id($product);
+
+        if (! array_key_exists($id, $cache)) {
+            $cache[$id] = app(CostCalculator::class)->calculate($product);
+            $request->attributes->set(self::CACHE_KEY, $cache);
+        }
+
+        return $cache[$id][$key];
     }
 
     public static function sort(Builder $query, string $key, string $direction): Builder
     {
-        // Rank with the authoritative decimal calculator before SQL pagination.
-        $values = (clone $query)->reorder()->with('usages.filament')->get()
-            ->mapWithKeys(fn (Product $product): array => [$product->getKey() => self::value($product, $key)])->all();
-        uasort($values, fn (string $left, string $right): int => Decimal::compare($left, $right));
-
-        if ($values === []) {
-            return $query;
-        }
-
-        $cases = [];
-        foreach (array_keys($values) as $rank => $id) {
-            $cases[] = 'WHEN '.(int) $id.' THEN '.$rank;
-        }
-
-        return $query->orderByRaw('CASE products.id '.implode(' ', $cases).' END '.($direction === 'desc' ? 'desc' : 'asc'))->orderBy('products.id');
+        return DecimalSort::apply($query->with('usages.filament'), $direction, fn (Product $product): string => self::value($product, $key));
     }
 }

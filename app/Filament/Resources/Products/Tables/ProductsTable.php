@@ -6,6 +6,7 @@ use App\Filament\Resources\Shared\DecimalColumn;
 use App\Models\Filament;
 use App\Models\Product;
 use App\Services\ProductService;
+use App\Support\Decimal;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
@@ -28,26 +29,37 @@ class ProductsTable
                 TextColumn::make('sku')->searchable()->sortable()->toggleable(),
                 IconColumn::make('active')->boolean()->sortable(),
                 TextColumn::make('filaments.name')->label('Filaments')->listWithLineBreaks(),
+                TextColumn::make('filaments.material')->label('Materials')->listWithLineBreaks(),
                 TextColumn::make('batch_quantity')->label('Batch qty')->sortable(),
-                DecimalColumn::make('batch_weight')->suffix(' g'),
-                TextColumn::make('batch_seconds')->label('Batch time (seconds)')->numeric()->sortable(),
-                DecimalColumn::make('additional_material_cost')->money('EUR')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('filament_grams')->label('Weight per item')
+                    ->state(fn (Product $record): string => ProductCosts::value($record, 'filament_grams'))
+                    ->formatStateUsing(fn (string $state): string => Decimal::trim(Decimal::round($state, 3)).' g')
+                    ->sortable(query: fn (Builder $query, string $direction): Builder => ProductCosts::sort($query, 'filament_grams', $direction)),
+                TextColumn::make('printing_seconds')->label('Printing time per item')
+                    ->state(fn (Product $record): string => ProductCosts::value($record, 'printing_seconds'))
+                    ->formatStateUsing(fn (string $state): string => Decimal::duration($state))
+                    ->sortable(query: fn (Builder $query, string $direction): Builder => ProductCosts::sort($query, 'printing_seconds', $direction)),
+                DecimalColumn::make('batch_weight')->suffix(' g')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('batch_seconds')->label('Batch printing time')
+                    ->formatStateUsing(fn (mixed $state): string => Decimal::duration((string) $state))->sortable()->toggleable(isToggledHiddenByDefault: true),
+                DecimalColumn::make('additional_material_cost')->formatStateUsing(fn (string $state): string => Decimal::money($state))->toggleable(isToggledHiddenByDefault: true),
                 ...array_map(fn (string $key): TextColumn => TextColumn::make($key)
                     ->state(fn (Product $record): string => ProductCosts::value($record, $key))
-                    ->numeric(decimalPlaces: 2)->suffix($key === 'processing_minutes' ? ' min/item' : ' h/item')
+                    ->formatStateUsing(fn (string $state): string => Decimal::trim(Decimal::round($state, 2)).($key === 'processing_minutes' ? ' min/item' : ' h/item'))
                     ->sortable(query: fn (Builder $query, string $direction): Builder => ProductCosts::sort($query, $key, $direction))
-                    ->toggleable(isToggledHiddenByDefault: true), ['printing_hours', 'processing_hours', 'processing_minutes']),
+                    ->toggleable(isToggledHiddenByDefault: $key !== 'processing_minutes'), ['printing_hours', 'processing_hours', 'processing_minutes']),
                 ...array_map(fn (string $key): TextColumn => TextColumn::make($key)
                     ->state(fn (Product $record): string => ProductCosts::value($record, $key))
-                    ->money('EUR')
-                    ->color(fn (string $state): string => (float) $state < 0 ? 'danger' : 'success')
+                    ->formatStateUsing(fn (string $state): string => Decimal::money($state))
+                    ->color(fn (string $state): string => Decimal::compare($state, '0') < 0 ? 'danger' : 'success')
                     ->sortable(query: fn (Builder $query, string $direction): Builder => ProductCosts::sort($query, $key, $direction))
                     ->toggleable(isToggledHiddenByDefault: ! in_array($key, ['manufacturing_cost', 'total_cost', 'profit', 'profit_per_printing_hour'])),
                     ['filament_cost', 'electricity_cost', 'depreciation_cost', 'labor_cost', 'packaging_cost', 'manufacturing_cost', 'platform_fee', 'total_cost', 'profit', 'profit_per_printing_hour', 'profit_per_total_hour']),
-                DecimalColumn::make('selling_price')->money('EUR'),
-                TextColumn::make('margin')->label('Margin')->suffix('%')
+                DecimalColumn::make('selling_price')->formatStateUsing(fn (string $state): string => Decimal::money($state)),
+                TextColumn::make('margin')->label('Margin')
                     ->state(fn (Product $record): string => ProductCosts::value($record, 'margin'))
-                    ->color(fn (string $state): string => (float) $state < 0 ? 'danger' : 'success')
+                    ->formatStateUsing(fn (string $state): string => Decimal::round($state).'%')
+                    ->color(fn (string $state): string => Decimal::compare($state, '0') < 0 ? 'danger' : 'success')
                     ->sortable(query: fn (Builder $query, string $direction): Builder => ProductCosts::sort($query, 'margin', $direction)),
             ])
             ->filters([

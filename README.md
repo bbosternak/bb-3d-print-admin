@@ -10,8 +10,8 @@ management, inventory, or production queue.
 - PHP 8.3+ with BCMath, PDO MySQL, Intl, Mbstring, DOM, Fileinfo, and Laravel's
   standard extensions.
 - Composer 2, MySQL 8+ or MariaDB 10.6+.
-- Node.js 22.12+ and npm for the optional application asset build. Filament's panel
-  assets are published by Composer's post-install/update scripts.
+- Node.js 22.12+ and npm to build the Filament panel theme. Base panel assets
+  are published by Composer's post-install/update scripts.
 
 ## Installation
 
@@ -58,7 +58,8 @@ For production, point the web server at `public/`, use HTTPS, set `APP_ENV=produ
 `APP_DEBUG=false`, the correct `APP_URL`, and `SESSION_SECURE_COOKIE=true`.
 Keep the panel behind your private network/VPN where possible. Give the PHP process
 write access to `storage/` and `bootstrap/cache/`, run `php artisan migrate --force`,
-then `php artisan optimize`. Back up the database and private uploads together.
+build the assets with `npm ci && npm run build`, then `php artisan optimize`.
+Back up the database and private uploads together.
 No payment gateway, external accounting service, or background worker is needed
 for these synchronous business modules.
 

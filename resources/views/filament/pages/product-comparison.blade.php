@@ -10,12 +10,12 @@
         <x-filament::section heading="Profit leaders">
             <p>Highest profit / unit:
                 @foreach ($unitWinners as $id)
-                    <x-filament::badge color="success">{{ $comparison[$id]['name'] }}</x-filament::badge>
+                    <x-filament::badge color="success">{{ $comparison[$id]['name'] }} (#{{ $id }})</x-filament::badge>
                 @endforeach
             </p>
             <p>Highest profit / printing hour:
                 @forelse ($hourWinners as $id)
-                    <x-filament::badge color="success">{{ $comparison[$id]['name'] }}</x-filament::badge>
+                    <x-filament::badge color="success">{{ $comparison[$id]['name'] }} (#{{ $id }})</x-filament::badge>
                 @empty
                     Not defined — no positive printing time.
                 @endforelse

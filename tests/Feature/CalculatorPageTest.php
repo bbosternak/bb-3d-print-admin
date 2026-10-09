@@ -114,6 +114,29 @@ class CalculatorPageTest extends TestCase
         $this->assertSame($before, $product->fresh()->getAttributes());
     }
 
+    public function test_fractional_batch_quantity_and_printing_seconds_are_rejected_without_truncation(): void
+    {
+        $product = $this->product('Fractional inputs');
+        $before = $product->getAttributes();
+        $usages = $product->usages()->get()->toArray();
+
+        foreach (['batch_quantity', 'batch_seconds'] as $field) {
+            Livewire::test(CostCalculator::class)
+                ->call('loadProduct', $product->id)
+                ->fillForm([$field => '1.5'])
+                ->call('calculate')->assertHasFormErrors([$field])
+                ->call('save')->assertHasFormErrors([$field]);
+
+            Livewire::test(PricingCalculator::class)
+                ->call('loadProduct', $product->id)
+                ->fillForm([$field => '1.5'])
+                ->call('calculate')->assertHasFormErrors([$field]);
+        }
+
+        $this->assertSame($before, $product->fresh()->getAttributes());
+        $this->assertSame($usages, $product->usages()->get()->toArray());
+    }
+
     public function test_pricing_temporary_product_shows_exact_and_rounded_results_without_saving(): void
     {
         $material = $this->filament();
@@ -208,6 +231,21 @@ class CalculatorPageTest extends TestCase
 
         $this->assertSame(0, Decimal::compare($page->get("comparison.{$slow->id}.costs.selling_price"), '0'));
         $this->assertSame($before, [$slow->fresh()->getAttributes(), $fast->fresh()->getAttributes()]);
+    }
+
+    public function test_profit_leaders_distinguish_products_with_the_same_name(): void
+    {
+        $slow = $this->product('Same name', ['selling_price' => '10', 'batch_seconds' => 7200]);
+        $fast = $this->product('Same name', ['selling_price' => '6', 'batch_seconds' => 3600]);
+
+        $page = Livewire::test(ProductComparison::class)
+            ->fillForm(['product_ids' => [$slow->id, $fast->id]])
+            ->call('calculate')->assertHasNoFormErrors()
+            ->assertSet('unitWinners', [$slow->id])->assertSet('hourWinners', [$fast->id]);
+
+        $html = preg_replace('/\s+/', ' ', $page->html());
+        $this->assertMatchesRegularExpression('/Highest profit \/ unit:(?:(?!<\/p>).)*Same name \(#'.$slow->id.'\)(?:(?!<\/p>).)*<\/p>/', $html);
+        $this->assertMatchesRegularExpression('/Highest profit \/ printing hour:(?:(?!<\/p>).)*Same name \(#'.$fast->id.'\)(?:(?!<\/p>).)*<\/p>/', $html);
     }
 
     public function test_comparison_reloads_settings_filament_prices_and_products_on_each_calculation(): void

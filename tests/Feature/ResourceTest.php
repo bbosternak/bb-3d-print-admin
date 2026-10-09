@@ -12,9 +12,11 @@ use App\Filament\Resources\Filaments\Pages\ListFilaments;
 use App\Filament\Resources\Products\Pages\CreateProduct;
 use App\Filament\Resources\Products\Pages\EditProduct;
 use App\Filament\Resources\Products\Pages\ListProducts;
+use App\Filament\Resources\Products\Tables\ProductCosts;
 use App\Filament\Resources\Sales\Pages\CreateSale;
 use App\Filament\Resources\Sales\Pages\EditSale;
 use App\Filament\Resources\Sales\Pages\ListSales;
+use App\Filament\Resources\Shared\FinancialSummary;
 use App\Models\Expense;
 use App\Models\Filament;
 use App\Models\Product;
@@ -27,6 +29,7 @@ use Filament\Facades\Filament as FilamentPanel;
 use Filament\Forms\Components\FileUpload;
 use Filament\Tables\Columns\ImageColumn;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -119,6 +122,22 @@ class ResourceTest extends TestCase
             ->filterTable('material', 'PETG')->assertCanNotSeeTableRecords([$high]);
     }
 
+    public function test_fractional_quantities_and_printing_seconds_are_rejected_without_truncation(): void
+    {
+        $filament = $this->filament();
+        foreach (['batch_quantity', 'batch_seconds'] as $field) {
+            Livewire::test(CreateProduct::class)->fillForm($this->productData([
+                $field => '1.5', 'usages' => [['filament_id' => $filament->id, 'grams' => '100']],
+            ]))->call('create')->assertHasFormErrors([$field]);
+            $this->assertDatabaseCount('products', 0);
+        }
+        $product = $this->product();
+        Livewire::test(CreateSale::class)->fillForm([
+            'product_id' => $product->id, 'sale_date' => '2026-10-01', 'quantity' => '1.5', 'unit_price' => '10',
+        ])->call('create')->assertHasFormErrors(['quantity']);
+        $this->assertDatabaseCount('sales', 0);
+    }
+
     public function test_decimal_inputs_preserve_precision_and_image_paths_cannot_be_forged(): void
     {
         Livewire::test(CreateFilament::class)->fillForm([
@@ -157,6 +176,97 @@ class ResourceTest extends TestCase
         $saleSummary = $sales->getTable()->getColumn('revenue')->getSummarizer('total')
             ->query($sales->getAllTableSummaryQuery())->getState();
         $this->assertSame(Decimal::mul($amount, '3'), $saleSummary);
+    }
+
+    public function test_decimal_and_accessor_columns_sort_without_float_arithmetic(): void
+    {
+        $low = $this->filament(['purchase_price' => '123456789012.123456789012']);
+        $high = $this->filament(['purchase_price' => '123456789012.123456789013']);
+        Livewire::test(ListFilaments::class)->sortTable('price_per_kg', 'desc')
+            ->assertCanSeeTableRecords([$high, $low], inOrder: true);
+
+        $product = $this->product();
+        $lowSale = Sale::query()->create([
+            'product_id' => $product->id, 'sale_date' => '2026-10-01', 'quantity' => 2, 'unit_price' => '123456789012.123456789012',
+        ]);
+        $highSale = Sale::query()->create([
+            'product_id' => $product->id, 'sale_date' => '2026-10-01', 'quantity' => 2, 'unit_price' => '123456789012.123456789013',
+        ]);
+        Livewire::test(ListSales::class)->sortTable('revenue', 'desc')
+            ->assertCanSeeTableRecords([$highSale, $lowSale], inOrder: true);
+    }
+
+    public function test_product_table_shows_readable_per_item_weight_time_material_and_processing(): void
+    {
+        $product = $this->product(['batch_quantity' => 2, 'batch_weight' => '100', 'batch_seconds' => 3600, 'selling_price' => '0']);
+        Livewire::test(ListProducts::class)
+            ->assertTableColumnVisible('filament_grams')->assertTableColumnVisible('printing_seconds')
+            ->assertTableColumnVisible('processing_minutes')->assertTableColumnVisible('filaments.material')
+            ->assertTableColumnFormattedStateSet('filament_grams', '50 g', $product)
+            ->assertTableColumnFormattedStateSet('printing_seconds', '30m', $product)
+            ->assertTableColumnFormattedStateSet('processing_minutes', '15 min/item', $product)
+            ->assertTableColumnExists('profit', fn ($column): bool => $column->getColor($column->getState()) === 'danger', $product);
+    }
+
+    public function test_product_cost_breakdown_is_cached_per_request_and_refreshes_on_next_request(): void
+    {
+        $product = $this->product()->load('usages.filament');
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            foreach (['filament_cost', 'electricity_cost', 'manufacturing_cost', 'total_cost', 'profit', 'margin'] as $key) {
+                ProductCosts::value($product, $key);
+            }
+            $this->assertLessThanOrEqual(4, count(DB::getQueryLog()), 'All product columns should share a single service calculation.');
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        Livewire::test(ListProducts::class)->assertTableColumnFormattedStateSet('filament_cost', '€1.00', $product);
+        $product->usages->first()->filament->update(['purchase_price' => '40']);
+        Livewire::test(ListProducts::class)->assertTableColumnFormattedStateSet('filament_cost', '€2.00', $product);
+    }
+
+    public function test_sales_estimates_are_reused_per_request_and_refresh_current_settings(): void
+    {
+        $product = $this->product();
+        foreach (range(1, 2) as $number) {
+            Sale::query()->create(['product_id' => $product->id, 'sale_date' => '2026-10-01', 'quantity' => 1, 'unit_price' => '5']);
+        }
+        FinancialSummary::sales(Sale::query());
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            FinancialSummary::sales(Sale::query());
+            $this->assertCount(0, DB::getQueryLog(), 'Repeated sales summary renders should reuse request-local results.');
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        Livewire::test(ListSales::class)->assertSee('electricity €0.03');
+        Setting::current()->update(['electricity_price' => '0.34']);
+        Livewire::test(ListSales::class)->assertSee('electricity €0.05');
+    }
+
+    public function test_financial_date_filters_support_until_only_and_reject_reversed_ranges(): void
+    {
+        $product = $this->product();
+        $oldExpense = Expense::query()->create(['date' => '2026-09-01', 'description' => 'Older', 'category' => 'Material', 'amount' => '5']);
+        $newExpense = Expense::query()->create(['date' => '2026-10-01', 'description' => 'Newer', 'category' => 'Material', 'amount' => '5']);
+        $oldSale = Sale::query()->create(['product_id' => $product->id, 'sale_date' => '2026-09-01', 'quantity' => 1, 'unit_price' => '5']);
+        $newSale = Sale::query()->create(['product_id' => $product->id, 'sale_date' => '2026-10-01', 'quantity' => 1, 'unit_price' => '5']);
+
+        foreach ([[ListExpenses::class, $oldExpense, $newExpense], [ListSales::class, $oldSale, $newSale]] as [$page, $old, $new]) {
+            Livewire::test($page)->filterTable('period', ['from' => null, 'until' => '2026-09-30'])
+                ->assertCanSeeTableRecords([$old])->assertCanNotSeeTableRecords([$new]);
+            Livewire::test($page)->filterTable('period', ['from' => '2026-10-01', 'until' => '2026-09-30'])
+                ->assertHasErrors(['tableDeferredFilters.period.until'])
+                ->assertCanNotSeeTableRecords([$old, $new])->assertSee('Invalid date range')
+                ->filterTable('period', ['from' => null, 'until' => '2026-09-30'])
+                ->assertHasNoErrors()->assertCanSeeTableRecords([$old]);
+            Livewire::test($page)->filterTable('period', ['from' => null, 'until' => '2026-99-99'])
+                ->assertHasErrors(['tableDeferredFilters.period.until'])->assertCanNotSeeTableRecords([$old, $new]);
+        }
     }
 
     public function test_expense_crud_period_category_filters_and_totals(): void

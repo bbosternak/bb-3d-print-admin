@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Expense;
 use App\Models\Sale;
 use App\Support\Decimal;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
@@ -25,15 +27,22 @@ class FinancialSummary
             throw ValidationException::withMessages(['until' => 'The through date must be on or after the from date.']);
         }
 
-        $sales = Sale::query()->with('product.usages.filament')
+        $sales = Sale::query()
             ->when($from, fn ($query) => $query->whereDate('sale_date', '>=', $from))
             ->when($until, fn ($query) => $query->whereDate('sale_date', '<=', $until))
-            ->when($productId, fn ($query) => $query->where('product_id', $productId))->get();
+            ->when($productId, fn ($query) => $query->where('product_id', $productId));
         $expenses = Expense::query()
             ->when($from, fn ($query) => $query->whereDate('date', '>=', $from))
-            ->when($until, fn ($query) => $query->whereDate('date', '<=', $until))->get();
+            ->when($until, fn ($query) => $query->whereDate('date', '<=', $until));
 
-        $revenue = $spent = $printingHours = $electricity = '0';
+        return $this->summarizeQueries($sales, $expenses);
+    }
+
+    public function summarizeQueries(Builder $sales, Builder $expenses): array
+    {
+        $sales = (clone $sales)->with('product.usages.filament')->get();
+        $expenses = (clone $expenses)->get();
+        $revenue = $spent = $printingHours = $processingHours = $electricity = '0';
         $units = 0;
         $categories = array_fill_keys(Expense::CATEGORIES, '0');
         $periods = $products = [];
@@ -41,7 +50,7 @@ class FinancialSummary
         $costs = [];
 
         foreach ($sales as $sale) {
-            $total = Decimal::mul($sale->unit_price, (string) $sale->quantity);
+            $total = $sale->revenue;
             $revenue = Decimal::add($revenue, $total);
             $units += $sale->quantity;
             $month = $sale->sale_date->format('Y-m');
@@ -50,8 +59,10 @@ class FinancialSummary
 
             $cost = $costs[$sale->product_id] ??= $calculator->calculate($sale->product);
             $hours = Decimal::mul($cost['printing_hours'], (string) $sale->quantity);
+            $processing = Decimal::mul($cost['processing_hours'], (string) $sale->quantity);
             $energy = Decimal::mul($cost['electricity_cost'], (string) $sale->quantity);
             $printingHours = Decimal::add($printingHours, $hours);
+            $processingHours = Decimal::add($processingHours, $processing);
             $electricity = Decimal::add($electricity, $energy);
             $products[$sale->product_id] ??= [
                 'name' => $sale->product->name,
@@ -84,10 +95,28 @@ class FinancialSummary
             'units' => $units,
             'average_price' => $units > 0 ? Decimal::div($revenue, (string) $units) : '0',
             'printing_hours' => $printingHours,
+            'processing_hours' => $processingHours,
             'electricity_cost' => $electricity,
             'categories' => $categories,
             'periods' => $periods,
             'products' => $products,
         ];
+    }
+
+    public function aggregateExpenses(Builder|QueryBuilder $query): string
+    {
+        return array_reduce((clone $query)->pluck('amount')->all(),
+            fn (string $sum, mixed $amount): string => Decimal::add($sum, (string) $amount), '0');
+    }
+
+    public function aggregateRevenue(Builder|QueryBuilder $query): string
+    {
+        $total = '0';
+        foreach ((clone $query)->get(['unit_price', 'quantity']) as $sale) {
+            $revenue = $sale instanceof Sale ? $sale->revenue : Decimal::mul((string) $sale->unit_price, (string) $sale->quantity);
+            $total = Decimal::add($total, $revenue);
+        }
+
+        return $total;
     }
 }

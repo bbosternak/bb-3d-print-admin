@@ -21,7 +21,7 @@ class PricingCalculator
             'increment' => ['required', D::rule(true)],
         ])->validate();
         $costs = $this->calculator->calculate($product);
-        $current = $product->exists ? $product->fresh() : $product;
+        $current = $product->exists ? $product->fresh(['usages']) : $product;
         if ($product->exists) {
             $current->fill($product->getDirty());
         }
@@ -54,7 +54,8 @@ class PricingCalculator
             $rounded = $increment;
         }
         Validator::make(['rounded_price' => D::trim($rounded)], ['rounded_price' => ['required', D::rule()]])->validate();
-        $priced = clone $product;
+        $priced = clone $current;
+        $priced->exists = false;
         $priced->selling_price = D::trim($rounded);
 
         return [

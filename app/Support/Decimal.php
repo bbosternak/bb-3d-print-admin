@@ -63,6 +63,7 @@ final class Decimal
             return '-'.self::duration(self::sub('0', $seconds));
         }
 
+        $seconds = self::round($seconds, 2);
         $hours = bcdiv($seconds, '3600', 0);
         $remaining = self::sub($seconds, self::mul($hours, '3600'));
         $minutes = bcdiv($remaining, '60', 0);
